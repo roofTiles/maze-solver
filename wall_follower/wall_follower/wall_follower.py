@@ -32,7 +32,12 @@ class Follow(Node):
         self.wall_distance = 0.0 # 0-degree range before rotate so parallel state
         self.state = 'find wall' # current state of robot
 
+
         self.i = 0
+
+        #sams vars
+        self.index_min_dist = 0.0
+        self.angle_min_dist = 0.0
         
         self.laser_subscription = self.create_subscription(
             LaserScan,
@@ -42,7 +47,9 @@ class Follow(Node):
         )
 
         self.timer_period = 0.01 # update time in seconds
-        self.timer = self.create_timer(self.timer_period, self.timer_callback)
+        #self.timer = self.create_timer(self.timer_period, self.timer_callback)
+        self.timer = self.create_timer(self.timer_period, self.sams_timer_callback)
+
         self.msg = Twist()
         
     def getch(self, timeout=0.1):
@@ -60,10 +67,61 @@ class Follow(Node):
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         return ch
 
-    def angle(self, angle_):
+    def angle(self, angle_):  # returns the index of a given angle
         ninty = self.zero + int((pi*angle_/180)/ self.angle_increment)
         return int(ninty)
     
+    def sams_timer_callback(self):
+        pass
+        
+        #msg = Twist()        
+
+        #PARAMETERS TO CHANGE
+        self.cornering_linvel = 0.05
+        self.cornering_angvel = 0.3
+
+        self.drive_linvel = 0.1
+
+        self.wall_dist_hi = 0.4
+        self.wall_dist_lo = 0.2
+        #self.drive_angvel (unused) - controller in the code below
+
+        #if the min dist angle << 90, the robot is facing towards the wall, should turn away
+        if (self.angle_min_dist < 80):
+            self.msg.linear.x = self.cornering_linvel
+            self.msg.angular.z = -1*self.cornering_angvel
+        #if the min dist angel >> 90, the robot is facing away from the wall or is too far, should turn closer
+        elif (self.angle_min_dist > 100):
+            self.msg.linear.x =self.cornering_linvel
+            self.msg.angular.z = self.cornering_angvel
+        #if the minimum distance angle is ~= 90, the robot is travelling parallel to a wall
+        else:
+            self.msg.linear.x = self.drive_linvel
+            self.msg.angular.z = 0.0
+            
+        
+        #tests if too far away from wall, steers it towards it
+        if (self.wall_distance > self.wall_dist_hi):
+            self.msg.angular.z = self.msg.angular.z + self.wall_distance/4
+        #tests if too close to wall, steers it away
+        elif (self.wall_distance < self.wall_dist_lo):
+            self.msg.angular.z = self.msg.angular.z - 0.1
+        
+        
+        key = self.getch()
+        if key == 'w':
+            self.msg.linear.x = 1.0  
+        elif key == 'x':
+            self.msg.linear.x = -1.0  
+        elif key == ' ':
+            self.msg.linear.x = 0.0
+            self.msg.angular.z = 0.0
+        
+        self.get_logger().info("xvel:\t" + str(self.msg.linear.x) + "\tzvel:\t" + str(self.msg.angular.z))
+
+        self.publisher_.publish(self.msg)
+
+
     def timer_callback(self):
 
         if (self.state == 'follow wall'): # every 10 samples do correction.
@@ -127,6 +185,8 @@ class Follow(Node):
                 self.state = 'rotate so parallel'
                 #self.msg.angular.z = 1.7
 
+
+
         # msg = Twist()
         key = self.getch()
         if key == 'w':
@@ -145,7 +205,6 @@ class Follow(Node):
         
         
         self.publisher_.publish(self.msg)
-        
 
     def laser_listener_callback(self, msg):
 
@@ -158,8 +217,20 @@ class Follow(Node):
 
         self.ninty_range = msg.ranges[self.angle(90.0)]
 
+        # find the angle of the closest distance to the wall.  
+        # if parallel is 90.  if > 90, should rotate CW.  if < 90, should rotate CCW
+
+        self.wall_distance = min(msg.ranges)
+        self.index_min_dist = msg.ranges.index(self.wall_distance)
+        self.angle_min_dist = self.zero + self.index_min_dist
+
         if self.ninty_range == np.Inf: # saturate current 90 degree LIDAR range to avoid uncontrollable behavior
             self.ninty_range = msg.range_max
+
+        #debugging outputs
+        #self.get_logger().info(str(self.zero_range) + '\t' + str(self.ninty_range))
+        #self.get_logger().info(str(self.angle_min_dist) + '\t' + str(self.index_min_dist) + '\t' + str(msg.ranges[self.index_min_dist]) + '\t' + str(self.wall_distance))
+        self.get_logger().info(str(self.angle_min_dist) + '\t' + str(self.index_min_dist) + '\t' + str(self.wall_distance))
 
 
 
